@@ -1,0 +1,111 @@
+#include <SoftwareSerial.h>
+#include <Arduino.h>
+#include <ESP8266WiFi.h>
+
+// Blynk template and auth
+#define BLYNK_TEMPLATE_ID        "TMPL61jwDhFLU"
+#define BLYNK_TEMPLATE_NAME      "Lora Env"
+#define BLYNK_AUTH_TOKEN         "Q3IvSAMF2Rl7jp5ugobC4gQBvNuRgr8U"
+#include <BlynkSimpleEsp8266.h>
+
+// Wi-Fi credentials
+char ssid[] = "admin_sang";
+char pass[] = "admin_sang";
+
+// SoftwareSerial for Nano ↔ ESP8266
+// RX = D6 (GPIO12), TX not used
+SoftwareSerial nanoSerial(13, 14);
+
+String buffer = "";
+bool receiving = false;
+
+// Hàm parse và gửi dữ liệu cảm biến lên Blynk
+void processSensorData(const String& data) {
+  int id = 0;
+  float mq1 = 0, mq2 = 0, mq3 = 0, temp = 0, hum = 0;
+  // Copy về C-string để strtok
+  char buf[data.length() + 1];
+  data.toCharArray(buf, data.length() + 1);
+  char* token = strtok(buf, ",");
+  while (token) {
+    if      (strncmp(token, "ID:",   3) == 0) id   = atoi(token + 3);
+    else if (strncmp(token, "MQ1:",  4) == 0) mq1  = atof(token + 4);
+    else if (strncmp(token, "MQ2:",  4) == 0) mq2  = atof(token + 4);
+    else if (strncmp(token, "MQ3:",  4) == 0) mq3  = atof(token + 4);
+    else if (strncmp(token, "T:",    2) == 0) temp = atof(token + 2);
+    else if (strncmp(token, "H:",    2) == 0) hum  = atof(token + 2);
+    token = strtok(NULL, ",");
+  }
+
+  switch (id) {
+    case 1:
+      Blynk.virtualWrite(V2,  mq1);
+      Blynk.virtualWrite(V3,  mq2);
+      Blynk.virtualWrite(V1,  mq3);
+      Blynk.virtualWrite(V4,  temp);
+      Blynk.virtualWrite(V5,  hum);
+      Blynk.virtualWrite(V14, 1);
+      break;
+    case 2:
+      Blynk.virtualWrite(V7,  mq1);
+      Blynk.virtualWrite(V8,  mq2);
+      Blynk.virtualWrite(V6,  mq3);
+      Blynk.virtualWrite(V9,  temp);
+      Blynk.virtualWrite(V10, hum);
+      Blynk.virtualWrite(V15, 1);
+      break;
+    default:
+      Serial.printf("ID không hợp lệ: %d\n", id);
+      break;
+  }
+}
+
+void setup() {
+  // UART debug
+  Serial.begin(115200);
+  delay(100);
+
+  // Kết nối với Nano
+  nanoSerial.begin(9600);
+  nanoSerial.listen();
+
+  // Khởi động Blynk
+  Blynk.begin(BLYNK_AUTH_TOKEN, ssid, pass);
+
+  Serial.println();
+  Serial.println("=== ESP8266 đợi Nano gửi dữ liệu... ===");
+}
+
+void loop() {
+  Blynk.run();
+
+  // Đọc từng dòng từ Nano
+  while (nanoSerial.available()) {
+    String line = nanoSerial.readStringUntil('\n');
+    line.trim();
+    if (line == "<STX>") {
+      // Bắt đầu khối dữ liệu mới
+      buffer = "";
+      receiving = true;
+    }
+    else if (line == "<ETX>") {
+      // Kết thúc khối, tiến hành parse
+      receiving = false;
+      processSensorData(buffer);
+    }
+    else if (receiving) {
+      // Ghép dải dữ liệu
+      buffer += line;
+    }
+    else {
+      // Nếu không phải khối cảm biến, có thể là barcode
+      if (line.startsWith("BARCODE:")) {
+        String code = line.substring(8);
+        code.trim();
+        Blynk.virtualWrite(V0, code);
+        Serial.print("Barcode: ");
+        Serial.println(code);
+      }
+    }
+  }
+}
